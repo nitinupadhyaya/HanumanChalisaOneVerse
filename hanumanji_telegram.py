@@ -1,9 +1,8 @@
 import os
 import sqlite3
+import pytz
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
-import pytz
 from verses import verses  # import from separate file
 
 # ---------------- Config ----------------
@@ -96,10 +95,11 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("broadcast", broadcast))
 
-    scheduler = AsyncIOScheduler(timezone=pytz.timezone("Asia/Kolkata"))
-    scheduler.add_job(lambda: app.job_queue.run_once(send_daily, 0), "cron", hour=7, minute=0)
-    scheduler.start()
+    # ✅ Use built-in JobQueue (no apscheduler needed)
+    ist = pytz.timezone("Asia/Kolkata")
+    app.job_queue.run_daily(send_daily, time=pytz.datetime.time(7, 0, tzinfo=ist))
 
+    print("🤖 Bot started…")
     app.run_polling()
 
 if __name__ == "__main__":
