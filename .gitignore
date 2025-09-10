@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.db
+
+# Virtual env
+.venv/
+env/
+venv/
+
+# Railway / deployment
+*.log
+.env
