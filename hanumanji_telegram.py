@@ -1,7 +1,8 @@
 import os
 import sqlite3
 import pytz
-from telegram import Update
+import datetime
+from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import Application, CommandHandler, ContextTypes
 from verses import verses  # import from separate file
 
@@ -44,6 +45,8 @@ def get_all_users():
 # ---------------- Bot Logic ----------------
 def get_next_message(chat_id):
     current_day = get_progress(chat_id)
+    if current_day == -1:
+        return None  # user paused
     next_day = current_day + 1
     if f"day{next_day}" in verses:
         v = verses[f"day{next_day}"]
@@ -60,9 +63,49 @@ def get_next_message(chat_id):
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
-    save_progress(chat_id, get_progress(chat_id))  # ensure user in DB
-    await update.message.reply_text("🙏 Welcome! You will now start receiving daily verses.")
-    await update.message.reply_text(get_next_message(chat_id))
+    args = context.args
+
+    # Ensure user is in DB
+    if get_progress(chat_id) == 0:
+        save_progress(chat_id, 0)
+
+    intro_text = (
+        "🌺 Did you always wish to learn the Hanuman Chalisa — not just recite it, "
+        "but truly understand its deep psychological and spiritual meaning?\n\n"
+        "🪔 Real learning requires consistency. With this bot, we’ve made it simple: "
+        "each morning, you’ll receive just one Charan (half a verse), along with its meaning and insights.\n\n"
+        "✨ Stay with us for 40 days — slowly, steadily, and with devotion. "
+        "Experience the power of consistency, and the divine blessings that come from truly understanding "
+        "the last of our revealed texts.\n\n"
+        "🙏 Welcome to your Hanuman Chalisa journey."
+    )
+
+    keyboard = [
+        [InlineKeyboardButton("🔗 Share this Bot", url=f"https://t.me/{context.bot.username}?start=join")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    await update.message.reply_text(intro_text, reply_markup=reply_markup)
+
+    # If joined via link, send first verse immediately
+    if args and args[0] == "join":
+        msg = get_next_message(chat_id)
+        if msg:
+            await update.message.reply_text(msg)
+
+async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    save_progress(chat_id, -1)
+    await update.message.reply_text("⏸️ You’ve paused daily verses. Type /resume anytime to continue.")
+
+async def resume(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    if get_progress(chat_id) == -1:
+        save_progress(chat_id, 0)  # restart from beginning
+    await update.message.reply_text("✅ Resumed daily verses. Jai Hanuman! 🙏")
+    msg = get_next_message(chat_id)
+    if msg:
+        await update.message.reply_text(msg)
 
 async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.id != ADMIN_ID:
@@ -73,6 +116,8 @@ async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     msg = " ".join(context.args)
     for user in get_all_users():
+        if get_progress(user) == -1:  # skip paused users
+            continue
         try:
             await context.bot.send_message(chat_id=user, text=f"[Broadcast] {msg}")
         except Exception as e:
@@ -82,22 +127,27 @@ async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ---------------- Scheduler ----------------
 async def send_daily(context: ContextTypes.DEFAULT_TYPE):
     for user in get_all_users():
+        if get_progress(user) == -1:  # skip paused users
+            continue
         msg = get_next_message(user)
-        try:
-            await context.bot.send_message(chat_id=user, text=msg)
-        except Exception as e:
-            print(f"⚠️ Could not send daily verse to {user}: {e}")
+        if msg:
+            try:
+                await context.bot.send_message(chat_id=user, text=msg)
+            except Exception as e:
+                print(f"⚠️ Could not send daily verse to {user}: {e}")
 
 def main():
     init_db()
     app = Application.builder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("stop", stop))
+    app.add_handler(CommandHandler("resume", resume))
     app.add_handler(CommandHandler("broadcast", broadcast))
 
-    # ✅ Use built-in JobQueue (no apscheduler needed)
+    # Schedule 7:00 AM IST
     ist = pytz.timezone("Asia/Kolkata")
-    app.job_queue.run_daily(send_daily, time=pytz.datetime.time(7, 0, tzinfo=ist))
+    app.job_queue.run_daily(send_daily, time=datetime.time(7, 0, tzinfo=ist))
 
     print("🤖 Bot started…")
     app.run_polling()
